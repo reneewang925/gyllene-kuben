@@ -1,0 +1,364 @@
+// Gyllene Kuben — Prisma Schema
+// Target: MariaDB (mysql provider), Prisma v7+
+// Connection URL is configured in prisma.config.ts (not schema.prisma for Prisma 7)
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+}
+
+// ─── Category ────────────────────────────────────────────────────────────────
+model Category {
+  id          Int       @id @default(autoincrement())
+  slug        String    @unique @db.VarChar(120)
+  nameSv      String    @db.VarChar(200)
+  nameEn      String    @db.VarChar(200)
+  descSv      String?   @db.Text
+  descEn      String?   @db.Text
+  imageUrl    String?   @db.VarChar(500)
+  sortOrder   Int       @default(0)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  products    Product[]
+
+  @@map("categories")
+}
+
+// ─── Product ─────────────────────────────────────────────────────────────────
+model Product {
+  id              Int       @id @default(autoincrement())
+  slug            String    @unique @db.VarChar(200)
+
+  // Multilingual content
+  nameSv          String    @db.VarChar(300)
+  nameEn          String    @db.VarChar(300)
+  descSv          String?   @db.Text
+  descEn          String?   @db.Text
+
+  // Tab 1 — The Object
+  materialsSv     String?   @db.Text
+  materialsEn     String?   @db.Text
+  dimensionsCm    String?   @db.VarChar(100)
+  weightGrams     Int?
+
+  // Tab 2 — The Artisan & Provenance
+  artisanNameSv   String?   @db.VarChar(300)
+  artisanNameEn   String?   @db.VarChar(300)
+  kilnOrigin      String?   @db.VarChar(200)
+  dynastyEra      String?   @db.VarChar(100)
+  heritageSv      String?   @db.Text
+  heritageEn      String?   @db.Text
+
+  // Tab 3 — The Ritual
+  ritualSv        String?   @db.Text
+  ritualEn        String?   @db.Text
+
+  // Commerce
+  priceOre        Int
+  compareAtOre    Int?
+  stockQty        Int       @default(0)
+  isAvailable     Boolean   @default(true)
+  isFeatured      Boolean   @default(false)
+  isLimitedEdition Boolean  @default(false)
+
+  // Media — stored as JSON array of image URLs
+  images          Json      @default("[]")
+  videoUrl        String?   @db.VarChar(500)
+
+  // SEO
+  metaTitleSv     String?   @db.VarChar(160)
+  metaTitleEn     String?   @db.VarChar(160)
+  metaDescSv      String?   @db.VarChar(320)
+  metaDescEn      String?   @db.VarChar(320)
+
+  // Relations
+  categoryId      Int
+  category        Category             @relation(fields: [categoryId], references: [id])
+  orderItems      OrderItem[]
+  journalPosts    JournalPostProduct[]
+
+  // Optional: denormalized slug of the primary related journal post
+  // (for quick front-end lookups without join; also set via JournalPostProduct)
+  relatedJournalSlug String?           @db.VarChar(200)
+
+  createdAt       DateTime   @default(now())
+  updatedAt       DateTime   @updatedAt
+
+  @@index([categoryId])
+  @@index([isAvailable, isFeatured])
+  @@map("products")
+}
+
+// ─── Order ───────────────────────────────────────────────────────────────────
+model Order {
+  id              Int           @id @default(autoincrement())
+  orderRef        String        @unique @db.VarChar(50)
+
+  // Customer
+  customerEmail   String        @db.VarChar(254)
+  customerName    String        @db.VarChar(200)
+  customerPhone   String?       @db.VarChar(50)
+
+  // Shipping address
+  addressLine1    String        @db.VarChar(300)
+  addressLine2    String?       @db.VarChar(300)
+  city            String        @db.VarChar(100)
+  postalCode      String        @db.VarChar(20)
+  country         String        @db.VarChar(100) @default("SE")
+
+  // Financials (all in öre / minor units)
+  subtotalOre     Int
+  shippingOre     Int           @default(0)
+  taxOre          Int           @default(0)
+  totalOre        Int
+
+  // Payment
+  paymentMethod   PaymentMethod @default(CARD)
+  paymentStatus   PaymentStatus @default(PENDING)
+  paymentRef      String?       @db.VarChar(200)
+
+  // Fulfillment
+  status          OrderStatus   @default(PENDING)
+  trackingNumber  String?       @db.VarChar(200)
+  notes           String?       @db.Text
+
+  // Language preference at time of order
+  locale          String        @db.VarChar(5) @default("sv")
+
+  orderItems      OrderItem[]
+
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@index([customerEmail])
+  @@index([status])
+  @@map("orders")
+}
+
+model OrderItem {
+  id          Int      @id @default(autoincrement())
+  orderId     Int
+  productId   Int
+  quantity    Int
+  priceOre    Int
+  nameSv      String   @db.VarChar(300)
+  nameEn      String   @db.VarChar(300)
+
+  order       Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product     Product  @relation(fields: [productId], references: [id])
+
+  @@index([orderId])
+  @@index([productId])
+  @@map("order_items")
+}
+
+// ─── Journal Post ─────────────────────────────────────────────────────────────
+// Rich bilingual cultural editorial with block-based content, media support,
+// and an optional cross-link to store products.
+model JournalPost {
+  id              Int       @id @default(autoincrement())
+  slug            String    @unique @db.VarChar(200)
+
+  // Bilingual metadata
+  titleSv         String    @db.VarChar(400)
+  titleEn         String    @db.VarChar(400)
+  excerptSv       String    @db.Text
+  excerptEn       String    @db.Text
+
+  // Block-based rich content stored as JSON
+  // Each element is a ContentBlock object (see lib/types.ts)
+  blocks          Json      @default("[]")
+
+  // Media
+  coverImage      String    @db.VarChar(500)
+  videoUrl        String?   @db.VarChar(500)
+
+  // Author credits (bilingual, optional)
+  authorSv        String?   @db.VarChar(300)
+  authorEn        String?   @db.VarChar(300)
+
+  // Editorial metadata
+  tag             String?   @db.VarChar(100)
+  readingTimeMin  Int       @default(5)
+  isPublished     Boolean   @default(false)
+  publishedAt     DateTime?
+
+  // SEO
+  metaTitleEn     String?   @db.VarChar(160)
+  metaDescEn      String?   @db.VarChar(320)
+
+  // Many-to-many relation to products (tagged in article body)
+  products        JournalPostProduct[]
+
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([isPublished, publishedAt])
+  @@map("journal_posts")
+}
+
+// ─── JournalPost <-> Product join table ──────────────────────────────────────
+model JournalPostProduct {
+  journalPostId   Int
+  productId       Int
+  sortOrder       Int       @default(0)
+
+  journalPost     JournalPost @relation(fields: [journalPostId], references: [id], onDelete: Cascade)
+  product         Product     @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@id([journalPostId, productId])
+  @@index([productId])
+  @@map("journal_post_products")
+}
+
+
+
+// ─── Enums ───────────────────────────────────────────────────────────────────
+enum PaymentMethod {
+  KLARNA
+  SWISH
+  CARD
+}
+
+enum PaymentStatus {
+  PENDING
+  AUTHORISED
+  CAPTURED
+  REFUNDED
+  FAILED
+}
+
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  PROCESSING
+  SHIPPED
+  DELIVERED
+  CANCELLED
+  REFUNDED
+}
+
+enum MemberTier {
+  BRONZE
+  SILVER
+  GOLD
+  PLATINUM
+}
+
+enum RedemptionStatus {
+  PENDING
+  APPROVED
+  SHIPPED
+  CANCELLED
+}
+
+// ─── Member ──────────────────────────────────────────────────────────────────
+// GDPR-compliant loyalty member record.
+model Member {
+  id                Int                  @id @default(autoincrement())
+  email             String               @unique @db.VarChar(254)
+  name              String               @db.VarChar(200)
+  phone             String?              @db.VarChar(50)
+
+  // GDPR compliance
+  gdprConsent       Boolean              @default(false)
+  gdprConsentAt     DateTime?
+  gdprConsentIp     String?              @db.VarChar(50)
+  marketingConsent  Boolean              @default(false)
+
+  // Loyalty
+  loyaltyPoints     Int                  @default(0)
+  tier              MemberTier           @default(BRONZE)
+
+  // Relations
+  pointsTransactions PointsTransaction[]
+  redemptions        RedemptionRequest[]
+
+  isActive          Boolean              @default(true)
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+
+  @@index([email])
+  @@index([tier])
+  @@map("members")
+}
+
+// ─── Points Transaction (audit ledger) ───────────────────────────────────────
+model PointsTransaction {
+  id          Int      @id @default(autoincrement())
+  memberId    Int
+  delta       Int      // Positive = earn, Negative = redeem/adjustment
+  reason      String   @db.VarChar(200)  // e.g. "Purchase #ORD-12345", "Admin adjustment"
+  adminNote   String?  @db.Text
+  createdAt   DateTime @default(now())
+
+  member      Member   @relation(fields: [memberId], references: [id], onDelete: Cascade)
+
+  @@index([memberId])
+  @@map("points_transactions")
+}
+
+// ─── Reward ──────────────────────────────────────────────────────────────────
+model Reward {
+  id            Int                  @id @default(autoincrement())
+  nameSv        String               @db.VarChar(200)
+  nameEn        String               @db.VarChar(200)
+  descriptionEn String?              @db.Text
+  pointsCost    Int
+  imageUrl      String?              @db.VarChar(500)
+  isActive      Boolean              @default(true)
+  sortOrder     Int                  @default(0)
+
+  redemptions   RedemptionRequest[]
+
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
+
+  @@map("rewards")
+}
+
+// ─── Redemption Request ───────────────────────────────────────────────────────
+model RedemptionRequest {
+  id          Int               @id @default(autoincrement())
+  memberId    Int
+  rewardId    Int
+  status      RedemptionStatus  @default(PENDING)
+  adminNote   String?           @db.Text
+  processedAt DateTime?
+
+  member      Member            @relation(fields: [memberId], references: [id])
+  reward      Reward            @relation(fields: [rewardId], references: [id])
+
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  @@index([memberId])
+  @@index([status])
+  @@map("redemption_requests")
+}
+
+// ─── Banner Config ────────────────────────────────────────────────────────────
+// Stores the CMS-editable homepage hero and category banner content.
+model BannerConfig {
+  id            Int      @id @default(autoincrement())
+  key           String   @unique @db.VarChar(100) // e.g. "homepage_hero", "category_porcelain"
+  titleSv       String   @db.VarChar(400)
+  titleEn       String   @db.VarChar(400)
+  subtitleSv    String?  @db.VarChar(600)
+  subtitleEn    String?  @db.VarChar(600)
+  ctaLabelSv    String?  @db.VarChar(100)
+  ctaLabelEn    String?  @db.VarChar(100)
+  ctaHref       String?  @db.VarChar(300)
+  imageUrl      String?  @db.VarChar(500)
+  theme         String?  @db.VarChar(20) // "imperial" | "xuan"
+  isActive      Boolean  @default(true)
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@map("banner_configs")
+}
